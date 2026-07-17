@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>2D Parkour Explorer</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #1a1a1a; font-family: sans-serif; color: white; }
+        #game-container { width: 100vw; height: 100vh; display: flex; flex-direction: column; }
+        #server-bar { background: #111; padding: 10px; display: flex; gap: 10px; align-items: center; border-bottom: 2px solid #333; }
+        canvas { background: #222; flex-grow: 1; }
+        input { background: #222; border: 1px solid #444; color: #00f2ff; padding: 5px; border-radius: 4px; }
+        button { background: #00f2ff; border: none; padding: 5px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        #status-dot { width: 10px; height: 10px; border-radius: 50%; background: #ff3c3c; }
+        #status-dot.on { background: #3cff3c; box-shadow: 0 0 8px #3cff3c; }
+    </style>
+</head>
+<body>
+    <div id="game-container">
+        <div id="server-bar">
+            <div id="status-dot"></div>
+            <input type="text" id="server-ip" value="ws://localhost:8080">
+            <button id="connect-btn">Connect to Server</button>
+        </div>
+        <canvas id="gameCanvas"></canvas>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const serverInput = document.getElementById('server-ip');
+        const connectBtn = document.getElementById('connect-btn');
+        const statusDot = document.getElementById('status-dot');
+
+        let player = { id: 'p' + Math.floor(Math.random()*999), x: 100, y: 100, vx: 0, vy: 0, w: 30, h: 45, grounded: false, sprint: false };
+        let platforms = [
+            {x: 0, y: 500, w: 2000, h: 50}, {x: 400, y: 400, w: 200, h: 20}, {x: 700, y: 300, w: 200, h: 20}, {x: 1000, y: 200, w: 200, h: 20}
+        ];
+        let others = {};
+        let keys = {};
+        let socket = null;
+        let camX = 0;
+
+        window.onload = () => {
+            canvas.width = window.innerWidth; canvas.height = window.innerHeight - 50;
+            window.addEventListener('keydown', e => { keys[e.code] = true; if(e.shiftKey) player.sprint = true; });
+            window.addEventListener('keyup', e => { keys[e.code] = false; if(!e.shiftKey) player.sprint = false; });
+            connectBtn.onclick = connect;
+            requestAnimationFrame(loop);
+        };
+
+        function connect() {
+            if(socket) socket.close();
+            socket = new WebSocket(serverInput.value);
+            socket.onopen = () => { statusDot.classList.add('on'); connectBtn.innerText = "Connected"; };
+            socket.onmessage = e => {
+                let data = JSON.parse(e.data);
+                if(data.type === 'state_sync') { others = data.players; delete others[player.id]; }
+            };
+            socket.onclose = () => { statusDot.classList.remove('on'); connectBtn.innerText = "Connect"; socket = null; };
+        }
+
+        function loop() {
+            // Physics
+            let speed = player.sprint ? 1.2 : 0.7;
+            if(keys['ArrowLeft'] || keys['KeyA']) player.vx -= speed;
+            else if(keys['ArrowRight'] || keys['KeyD']) player.vx += speed;
+            else player.vx *= 0.8;
+
+            player.vy += 0.8; // Gravity
+            if((keys['Space'] || keys['ArrowUp'] || keys['KeyW']) && player.grounded) { player.vy = -16; player.grounded = false; }
+
+            player.x += player.vx; player.y += player.vy;
+            player.grounded = false;
+            platforms.forEach(p => {
+                if(player.x < p.x + p.w && player.x + player.w > p.x && player.y + player.h > p.y && player.y + player.h < p.y + player.vy + 10) {
+                    player.y = p.y - player.h; player.vy = 0; player.grounded = true;
+                }
+            });
+
+            if(player.y > 1000) { player.x = 100; player.y = 100; }
+            camX += (player.x - canvas.width/2 - camX) * 0.1;
+
+            if(socket && socket.readyState === 1) {
+                socket.send(JSON.stringify({type:'player_update', id:player.id, payload:{x:player.x, y:player.y}}));
+            }
+
+            // Draw
+            ctx.clearRect(0,0,canvas.width,canvas.height);
+            ctx.save(); ctx.translate(-camX, 0);
+            ctx.fillStyle = '#444'; platforms.forEach(p => ctx.fillRect(p.x, p.y, p.w, p.h));
+            ctx.fillStyle = 'rgba(0, 242, 255, 0.4)'; for(let id in others) ctx.fillRect(others[id].x, others[id].y, 30, 45);
+            ctx.fillStyle = '#00f2ff'; ctx.fillRect(player.x, player.y, 30, 45);
+            ctx.restore();
+            requestAnimationFrame(loop);
+        }
+    </script>
+</body>
+</html>
